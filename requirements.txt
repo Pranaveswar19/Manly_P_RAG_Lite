@@ -1,7 +1,6 @@
-llama-index-core==0.14.2
-llama-index-vector-stores-faiss>=0.5,<1
-llama-index-llms-openai>=0.6,<1
-llama-index-embeddings-huggingface>=0.2,<1
+llama-index-llms-openai
+llama-index-embeddings-huggingface
+llama-index-vector-stores-faiss
 sentence-transformers==3.0.1
 faiss-cpu
 streamlit==1.38.0
