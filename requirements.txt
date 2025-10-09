@@ -1,17 +1,17 @@
 # Core RAG + Embeddings
 llama-index-core==0.14.2
-llama-index-vector-stores-faiss
-llama-index-llms-openai==0.14.2
-llama-index-embeddings-huggingface==0.14.2
+llama-index-vector-stores-faiss>=0.5,<1
+llama-index-llms-openai>=0.6,<1
+llama-index-embeddings-huggingface>=0.2,<1
 
 # Reranker
 sentence-transformers==3.0.1
 
 # Vector search backend
-faiss-cpu==1.7.4
+faiss-cpu
 
 # UI
-streamlit==1.37.0
+streamlit==1.38.0
 
 # Utilities
 python-dotenv==1.0.1
