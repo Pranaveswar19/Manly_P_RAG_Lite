@@ -10,12 +10,14 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.postprocessor import SentenceTransformerRerank
 from llama_index.core.query_engine import RetrieverQueryEngine
 
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
+# Load secrets (Streamlit Cloud style)
 if "OPENAI_API_KEY" in st.secrets:
     os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 for key in ["RAG_PERSIST_DIR", "RAG_LLM_MODEL", "RAG_TOP_K", "RAG_TOP_N"]:
@@ -26,13 +28,22 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DEFAULT_INDEX_DIR = DATA_DIR / "index"
 
+# Embedding model - MUST match index build
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
-st.set_page_config(page_title="Manly P. Hall RAG", layout="wide")
-st.title("📜 Ask Manly P. Hall")
-st.caption("RAG over Manly P. Hall's works with FAISS + reranking.")
+# Page config
+st.set_page_config(
+    page_title="Ask Manly P. Hall",
+    page_icon="📜",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
+
+# ============================================================================
+# Error Handling
+# ============================================================================
 
 class RAGError(Exception):
     """Base exception for RAG application."""
@@ -50,16 +61,11 @@ class EmbeddingDimensionError(RAGError):
 
 
 def validate_environment() -> Tuple[bool, List[str]]:
-    """
-    Validate required environment/secrets.
-    
-    Returns:
-        Tuple of (is_valid, error_messages)
-    """
+    """Validate required environment/secrets."""
     errors = []
     
     if not os.getenv("OPENAI_API_KEY"):
-        errors.append("❌ OPENAI_API_KEY not configured in Streamlit secrets")
+        errors.append("❌ OPENAI_API_KEY not configured")
         errors.append("   Add it in: Settings → Secrets")
     
     persist_dir = os.getenv("RAG_PERSIST_DIR", str(DEFAULT_INDEX_DIR))
@@ -71,13 +77,7 @@ def validate_environment() -> Tuple[bool, List[str]]:
 
 
 def handle_error(error: Exception, context: str = "") -> None:
-    """
-    Centralized error handler with user-friendly messages.
-    
-    Args:
-        error: The exception that occurred
-        context: Additional context
-    """
+    """Centralized error handler with user-friendly messages."""
     error_msg = f"{context}: {str(error)}" if context else str(error)
     logger.error(error_msg, exc_info=True)
     
@@ -86,22 +86,20 @@ def handle_error(error: Exception, context: str = "") -> None:
         st.info("**Solution:** Ensure index files are uploaded to `data/index/`")
     elif isinstance(error, EmbeddingDimensionError):
         st.error("🔴 Embedding model mismatch detected")
-        st.info("**Solution:** Index was built with a different embedding model. "
-                "Contact administrator to rebuild the index.")
+        st.info("**Solution:** Contact administrator to rebuild the index.")
     else:
         st.error(f"🔴 An error occurred: {str(error)}")
-        with st.expander("Show details"):
+        with st.expander("Show technical details"):
             st.code(error_msg)
 
 
+# ============================================================================
+# Core Functions
+# ============================================================================
+
 @st.cache_resource(show_spinner=False)
 def initialize_models():
-    """
-    Initialize and cache embedding and LLM models.
-    
-    Returns:
-        Tuple of (embed_model, llm)
-    """
+    """Initialize and cache embedding and LLM models."""
     try:
         logger.info(f"Initializing embedding model: {EMBED_MODEL_NAME}")
         embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL_NAME)
@@ -118,15 +116,7 @@ def initialize_models():
 
 @st.cache_resource(show_spinner=False)
 def load_index(persist_dir: str):
-    """
-    Load FAISS index with comprehensive error handling.
-    
-    Args:
-        persist_dir: Directory where index is persisted
-        
-    Returns:
-        Tuple of (index, vector_store)
-    """
+    """Load FAISS index with comprehensive error handling."""
     try:
         persist_path = Path(persist_dir)
         
@@ -157,16 +147,7 @@ def load_index(persist_dir: str):
 
 
 def validate_embedding_dimensions(embed_model, vector_store) -> Tuple[bool, int, int]:
-    """
-    Validate that embedding dimensions match.
-    
-    Args:
-        embed_model: The embedding model
-        vector_store: The FAISS vector store
-        
-    Returns:
-        Tuple of (is_valid, model_dim, index_dim)
-    """
+    """Validate that embedding dimensions match."""
     try:
         probe_vec = embed_model.get_text_embedding("dimension probe")
         model_dim = len(probe_vec)
@@ -200,16 +181,7 @@ def validate_embedding_dimensions(embed_model, vector_store) -> Tuple[bool, int,
 
 @st.cache_resource
 def get_reranker(top_n: int, model: str = RERANK_MODEL_NAME):
-    """
-    Get cached reranker model.
-    
-    Args:
-        top_n: Number of documents after reranking
-        model: Reranker model name
-        
-    Returns:
-        SentenceTransformerRerank instance
-    """
+    """Get cached reranker model."""
     try:
         logger.info(f"Initializing reranker: {model}")
         return SentenceTransformerRerank(top_n=top_n, model=model)
@@ -217,24 +189,56 @@ def get_reranker(top_n: int, model: str = RERANK_MODEL_NAME):
         logger.error(f"Failed to initialize reranker: {e}", exc_info=True)
         raise RAGError(f"Reranker initialization failed: {e}")
 
+
+def extract_book_name(file_path: str) -> str:
+    """
+    Extract clean book name from file path.
+    
+    Examples:
+        '/path/to/The_Secret_Teachings.pdf' -> 'The Secret Teachings'
+        'book_title.txt' -> 'Book Title'
+    """
+    if not file_path:
+        return "Unknown Source"
+    
+    # Get filename without path
+    filename = Path(file_path).stem
+    
+    # Replace underscores and hyphens with spaces
+    clean_name = filename.replace('_', ' ').replace('-', ' ')
+    
+    # Remove common suffixes
+    for suffix in [' ocr', ' text', ' txt', ' pdf']:
+        if clean_name.lower().endswith(suffix):
+            clean_name = clean_name[:-len(suffix)]
+    
+    # Title case
+    clean_name = clean_name.title()
+    
+    return clean_name.strip() or "Unknown Source"
+
+
+# ============================================================================
+# Main Application
+# ============================================================================
+
 def main():
     """Main application logic."""
     
+    # Header
+    st.title("📜 Ask Manly P. Hall")
+    st.markdown("*Explore the teachings of Manly P. Hall through AI-powered search*")
+    st.divider()
+    
+    # Validate environment
     is_valid, errors = validate_environment()
     if not is_valid:
-        st.error("⚠️ Configuration Issues")
+        st.error("⚠️ Configuration Error")
         for error in errors:
             st.markdown(error)
         st.stop()
     
-    st.sidebar.header("Settings")
-    RAG_TOP_K = int(os.getenv("RAG_TOP_K", "12"))
-    RAG_TOP_N = int(os.getenv("RAG_TOP_N", "6"))
-    
-    top_k = st.sidebar.slider("Top-K retrieved chunks", 5, 40, RAG_TOP_K)
-    top_n = st.sidebar.slider("Top-N after rerank", 3, 15, RAG_TOP_N)
-    show_sources = st.sidebar.checkbox("Show sources", value=True)
-    
+    # Initialize models
     try:
         embed_model, llm = initialize_models()
         Settings.embed_model = embed_model
@@ -243,105 +247,168 @@ def main():
         handle_error(e, "Model initialization")
         st.stop()
     
+    # Load index
     persist_dir = os.getenv("RAG_PERSIST_DIR", str(DEFAULT_INDEX_DIR))
     
-    colA, colB = st.sidebar.columns(2)
-    with colA:
-        if st.button("Reload index", use_container_width=True):
-            st.cache_resource.clear()
-            st.rerun()
-    
     try:
-        with st.spinner("Loading search index..."):
+        with st.spinner("Loading knowledge base..."):
             index, vector_store = load_index(persist_dir)
     except IndexLoadError as e:
         handle_error(e, "Index loading")
         st.stop()
     
+    # Validate embedding dimensions (silently, only log errors)
     is_valid, model_dim, index_dim = validate_embedding_dimensions(embed_model, vector_store)
-    
-    st.sidebar.markdown(
-        f"**Index dim:** {index_dim}  \n"
-        f"**Model dim:** {model_dim}  \n"
-        f"**Embedder:** `{EMBED_MODEL_NAME}`"
-    )
     
     if not is_valid:
         if index_dim == -1:
-            st.error("❌ Could not read FAISS index dimension. Index may be corrupted.")
-            st.info("**Solution:** Contact administrator to rebuild the index")
+            st.error("❌ Search index is corrupted or incompatible")
+            st.info("**Solution:** Contact administrator")
         else:
-            st.error(
-                f"❌ **Embedding Dimension Mismatch**\n\n"
-                f"- FAISS index expects: **{index_dim}** dimensions\n"
-                f"- Current model outputs: **{model_dim}** dimensions\n\n"
-                f"**The index was built with a different embedding model.**"
+            st.error("❌ Search index configuration error")
+            st.info(
+                "The search index was built with a different model configuration. "
+                "Please contact the administrator to rebuild the index."
             )
-            st.warning(
-                "**To fix:**\n\n"
-                "Contact the administrator to rebuild the index with:\n"
-                f"`{EMBED_MODEL_NAME}`\n\n"
-                "Or update `EMBED_MODEL_NAME` in the code to match the index."
-            )
+        logger.error(f"Dimension mismatch: model={model_dim}, index={index_dim}")
         st.stop()
     
+    # Sidebar settings (minimal)
+    with st.sidebar:
+        st.header("⚙️ Search Settings")
+        
+        RAG_TOP_K = int(os.getenv("RAG_TOP_K", "12"))
+        RAG_TOP_N = int(os.getenv("RAG_TOP_N", "6"))
+        
+        top_k = st.slider(
+            "Number of passages to retrieve",
+            min_value=5,
+            max_value=40,
+            value=RAG_TOP_K,
+            help="More passages = broader search but slower"
+        )
+        
+        top_n = st.slider(
+            "Number of passages to use for answer",
+            min_value=3,
+            max_value=15,
+            value=RAG_TOP_N,
+            help="Fewer passages = faster, more focused answers"
+        )
+        
+        show_sources = st.checkbox(
+            "Show source books",
+            value=True,
+            help="Display which books were used to generate the answer"
+        )
+        
+        st.divider()
+        
+        if st.button("🔄 Reload Index", use_container_width=True):
+            st.cache_resource.clear()
+            st.rerun()
+        
+        st.caption("*Powered by LlamaIndex & OpenAI*")
+    
+    # Query interface
     question = st.text_area(
-        "Ask a question:",
-        placeholder="e.g., What is the symbolic meaning of the number 33 in Freemasonry?",
-        height=100
+        "**What would you like to know?**",
+        placeholder="Ask about symbolism, philosophy, ancient mysteries, or esoteric teachings...",
+        height=100,
+        help="Be specific for better results"
     )
-    ask = st.button("Ask", type="primary")
+    
+    col1, col2, col3 = st.columns([1, 1, 4])
+    with col1:
+        ask = st.button("🔍 Ask", type="primary", use_container_width=True)
+    with col2:
+        if st.button("Clear", use_container_width=True):
+            st.rerun()
     
     if ask and question.strip():
         try:
-            with st.spinner("🔍 Retrieving and generating answer..."):
+            with st.spinner("🔍 Searching Manly P. Hall's works..."):
+                # Create retriever
                 retriever = index.as_retriever(similarity_top_k=top_k)
                 
+                # Get reranker
                 reranker = get_reranker(top_n=top_n)
                 
+                # Create query engine
                 qe = RetrieverQueryEngine.from_args(
                     retriever=retriever,
                     node_postprocessors=[reranker],
                     response_mode="compact",
                 )
                 
+                # Validate query embedding dimension
                 qdim = len(Settings.embed_model.get_text_embedding(question))
                 if qdim != index_dim:
-                    st.error(
-                        f"❌ Query embedding dimension ({qdim}) doesn't match "
-                        f"index dimension ({index_dim}). This shouldn't happen!"
-                    )
+                    st.error("❌ Query processing error. Please try again.")
+                    logger.error(f"Query dim {qdim} != index dim {index_dim}")
                     st.stop()
                 
+                # Execute query
                 response = qe.query(question)
                 
                 if not response or not str(response).strip():
-                    st.warning("⚠️ No answer generated. Try rephrasing your question.")
+                    st.warning("⚠️ No answer found. Try rephrasing your question.")
                     st.stop()
             
-            st.markdown("### 🧠 Answer")
-            st.write(str(response).strip())
+            # Display answer
+            st.success("**Answer:**")
+            st.markdown(str(response).strip())
             
+            # Display sources (clean version)
             if show_sources and hasattr(response, "source_nodes") and response.source_nodes:
-                st.markdown("### 📚 Sources")
-                for i, sn in enumerate(response.source_nodes, start=1):
+                st.divider()
+                st.markdown("##### 📚 Source Books")
+                
+                # Extract unique book names
+                book_names = set()
+                for sn in response.source_nodes:
                     meta = sn.node.metadata or {}
-                    src = meta.get("file_path") or meta.get("file_name") or "unknown"
-                    score = getattr(sn, "score", None)
-                    score_str = f" (score: {score:.3f})" if score is not None else ""
+                    src = meta.get("file_path") or meta.get("file_name") or ""
+                    book_name = extract_book_name(src)
+                    book_names.add(book_name)
+                
+                # Display as a clean list
+                if book_names:
+                    # Remove "Unknown Source" if other sources exist
+                    if len(book_names) > 1 and "Unknown Source" in book_names:
+                        book_names.remove("Unknown Source")
                     
-                    with st.expander(f"[{i}] {Path(src).name}{score_str}"):
-                        st.write(sn.node.text[:800])
-                        if len(sn.node.text) > 800:
-                            st.caption("... (truncated)")
-            elif show_sources:
-                st.info("No source documents available")
+                    for book in sorted(book_names):
+                        st.markdown(f"- *{book}*")
+                else:
+                    st.caption("Source information unavailable")
         
         except Exception as e:
             handle_error(e, "Query execution")
     
-    else:
-        st.info("💡 Enter a question and click **Ask** to query the archive.")
+    elif not question.strip() and ask:
+        st.info("💡 Please enter a question to search.")
+    
+    # Footer
+    st.divider()
+    with st.expander("ℹ️ About this tool"):
+        st.markdown("""
+        This tool uses AI to search through Manly P. Hall's extensive body of work, 
+        including his books and lectures on symbolism, philosophy, and esoteric traditions.
+        
+        **How it works:**
+        1. Your question is converted into a semantic representation
+        2. Relevant passages are retrieved from the indexed texts
+        3. An AI model synthesizes these passages into a coherent answer
+        
+        **Tips for best results:**
+        - Be specific in your questions
+        - Ask about concepts, symbols, or teachings
+        - Try rephrasing if you don't get a good answer
+        
+        **Note:** This tool provides information based on Manly P. Hall's works. 
+        Answers are AI-generated and should be verified for critical research.
+        """)
 
 
 if __name__ == "__main__":
