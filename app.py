@@ -10,14 +10,12 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.postprocessor import SentenceTransformerRerank
 from llama_index.core.query_engine import RetrieverQueryEngine
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Load secrets (Streamlit Cloud style)
 if "OPENAI_API_KEY" in st.secrets:
     os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 for key in ["RAG_PERSIST_DIR", "RAG_LLM_MODEL", "RAG_TOP_K", "RAG_TOP_N"]:
@@ -28,11 +26,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DEFAULT_INDEX_DIR = DATA_DIR / "index"
 
-# Embedding model - MUST match index build
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 RERANK_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
-# Page config
 st.set_page_config(
     page_title="Ask Manly P. Hall",
     page_icon="📜",
@@ -40,10 +36,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-
-# ============================================================================
-# Error Handling
-# ============================================================================
 
 class RAGError(Exception):
     """Base exception for RAG application."""
@@ -83,10 +75,6 @@ def handle_error(error: Exception, context: str = "") -> None:
         with st.expander("Technical details"):
             st.code(error_msg)
 
-
-# ============================================================================
-# Core Functions
-# ============================================================================
 
 @st.cache_resource(show_spinner=False)
 def initialize_models():
@@ -175,19 +163,13 @@ def get_reranker(top_n: int, model: str = RERANK_MODEL_NAME):
         raise RAGError(f"Reranker initialization failed: {e}")
 
 
-# ============================================================================
-# Main Application
-# ============================================================================
-
 def main():
     """Main application logic."""
     
-    # Header
     st.title("📜 Ask Manly P. Hall")
     st.markdown("*Explore the wisdom of Manly P. Hall through AI-powered search*")
     st.divider()
     
-    # Validate environment
     is_valid, errors = validate_environment()
     if not is_valid:
         st.error("⚠️ Configuration Error")
@@ -195,7 +177,6 @@ def main():
             st.markdown(error)
         st.stop()
     
-    # Initialize models
     try:
         embed_model, llm = initialize_models()
         Settings.embed_model = embed_model
@@ -204,7 +185,6 @@ def main():
         handle_error(e, "Model initialization")
         st.stop()
     
-    # Load index
     persist_dir = os.getenv("RAG_PERSIST_DIR", str(DEFAULT_INDEX_DIR))
     
     try:
@@ -214,12 +194,10 @@ def main():
         handle_error(e, "Index loading")
         st.stop()
     
-    # Validate dimensions (silent check)
     if not validate_embedding_dimensions(embed_model, vector_store):
         st.error("❌ System configuration error. Please contact the administrator.")
         st.stop()
     
-    # Sidebar settings (minimal, clean)
     with st.sidebar:
         st.header("⚙️ Settings")
         
@@ -244,7 +222,6 @@ def main():
             st.cache_resource.clear()
             st.rerun()
     
-    # Query interface
     question = st.text_area(
         "**What would you like to know?**",
         placeholder="Ask about symbolism, philosophy, mysteries, esoteric teachings...",
@@ -262,27 +239,22 @@ def main():
     if ask and question.strip():
         try:
             with st.spinner("Searching the archives..."):
-                # Create retriever
                 retriever = index.as_retriever(similarity_top_k=top_k)
                 
-                # Get reranker
                 reranker = get_reranker(top_n=top_n)
                 
-                # Create query engine
                 qe = RetrieverQueryEngine.from_args(
                     retriever=retriever,
                     node_postprocessors=[reranker],
                     response_mode="compact",
                 )
                 
-                # Execute query
                 response = qe.query(question)
                 
                 if not response or not str(response).strip():
                     st.warning("⚠️ No answer found. Try rephrasing your question.")
                     st.stop()
             
-            # Display answer (clean, no sources)
             st.success("**Answer**")
             st.markdown(str(response).strip())
             
@@ -294,7 +266,6 @@ def main():
     elif not question.strip() and ask:
         st.info("💡 Please enter a question.")
     
-    # Footer
     st.divider()
     with st.expander("ℹ️ About"):
         st.markdown("""
